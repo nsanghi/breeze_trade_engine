@@ -1,0 +1,13 @@
+pip >= 24.0
+nautilus_trader
+breeze-connect
+breeze_strategies
+python-dotenv
+scipy
+numpy
+python-dotenv
+
+# for development
+pytest
+ipykernel
+jupyterlab
