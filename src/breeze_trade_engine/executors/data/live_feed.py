@@ -3,9 +3,9 @@ from breeze_trade_engine.common.file_utils import FileWriterMixin
 from breeze_trade_engine.executors.base_executor import BaseExecutor, Singleton
 
 
-class LiveFeed(Singleton, BaseExecutor, FileWriterMixin):
+class LiveFeed(BaseExecutor, FileWriterMixin, metaclass=Singleton):
 
-    def _init(self, name, start_time, end_time, interval):
+    def __init__(self, name, start_time, end_time, interval):
         BaseExecutor.__init__(self, name, start_time, end_time, interval)
         # FileWriterMixin.__init__(self)
         self.logger = logging.getLogger(__name__)

@@ -3,10 +3,10 @@ from breeze_trade_engine.common.file_utils import FileWriterMixin
 from breeze_trade_engine.executors.base_executor import BaseExecutor, Singleton
 
 
-class StrategyOneExecutor(Singleton, BaseExecutor, FileWriterMixin):
+class StrategyOneExecutor(BaseExecutor, FileWriterMixin, metaclass=Singleton):
 
-    def _init(self, name, start_time, end_time, interval):
-        super().__init__(name, start_time, end_time, interval)
+    def __init__(self, name, start_time, end_time, interval):
+        BaseExecutor.__init__(name, start_time, end_time, interval)
         self.logger = logging.getLogger(__name__)
 
     # TODO: Think of subscription and notification mechanism for subscribers

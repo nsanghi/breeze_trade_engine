@@ -1,26 +1,17 @@
 import time
-import os
 import logging
 from datetime import datetime, timedelta
 from abc import ABC, abstractmethod
 from breeze_trade_engine.common.date_utils import is_trading_day
 
 
-class Singleton:
+class SingletonMeta(type):
     _instances = {}
 
-    def __new__(cls, *args, **kwargs):
+    def __call__(cls, *args, **kwargs):
         if cls not in cls._instances:
-            cls._instances[cls] = super().__new__(cls)
+            cls._instances[cls] = super().__new__(cls, *args, **kwargs)
         return cls._instances[cls]
-
-    def __init__(self, *args, **kwargs):
-        if not hasattr(self, "initialized"):
-            self.initialized = True
-            self._init(*args, **kwargs)
-
-    def _init(self, *args, **kwargs):
-        pass
 
 
 class BaseExecutor(ABC):

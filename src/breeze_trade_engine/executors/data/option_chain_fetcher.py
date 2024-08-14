@@ -10,17 +10,16 @@ from breeze_trade_engine.common.file_utils import FileWriterMixin
 MAX_CONSECUTIVE_FAILURES = 30
 
 
-class OptionChainDataFetcher(Singleton, BaseExecutor, FileWriterMixin):
+class OptionChainDataFetcher(BaseExecutor, FileWriterMixin, metaclass=Singleton):
 
-    def _init(self, name, start_time, end_time, interval):
+    def __init__(self, name, start_time, end_time, interval):
         BaseExecutor.__init__(self, name, start_time, end_time, interval)
-        # FileWriterMixin.__init__(self)
         self.logger = logging.getLogger(__name__)
         app_key = os.environ.get("BREEZE_APP_KEY")
         # Initialize SDK
         self.breeze = BreezeConnect(api_key=app_key)
         self.consecutive_failures = 0
-        self.filepath = None
+        self.file = None
         
     # TODO: Write test cases for this class also check actual data fetch
     # TODO: Think of subscription and notification mechanism for subscribers
@@ -31,21 +30,23 @@ class OptionChainDataFetcher(Singleton, BaseExecutor, FileWriterMixin):
         self._refresh_breeze_connection
         # Create a filename for the CSV file based on the current date
         today = datetime.now().strftime("%Y-%m-%d")
-        self.filename = f"{os.environ.get("FILE_PATH")}/nifty_chain_{today}.csv"
+        self.file = f"{os.environ.get("FILE_PATH")}/nifty_chain_{today}.csv"
         self.logger.info("Day begin logic executed.")
 
     def process_day_end(self):
         # Write the csv to parquet and delete csv
         self.write_to_parquet(delete_csv=True)
+        self.file = None # remove reference to today's file
         self.logger.info("Day end logic executed.")
 
     def process_event(self):
         # implemented the abstract method
         # Main processing logic to fire live quote fetch from Breeze
         self.handle_consecutive_failures()
-        quotes = self._get_chain_quotes()
+        quotes = self._get_option_chain()
         if quotes and len(quotes) > 0:
-            self.write_to_csv(quotes, self.filename, self.logger)
+            self.write_to_csv(quotes, self.file, self.logger)
+            self.notify_subscribers(quotes)
         
 
     def _get_option_chain(self):
