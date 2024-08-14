@@ -1,8 +1,9 @@
 import logging
+from breeze_trade_engine.common.file_utils import FileWriterMixin
 from breeze_trade_engine.executors.base_executor import BaseExecutor, Singleton
 
 
-class StrategyOneExecutor(BaseExecutor, Singleton):
+class StrategyOneExecutor(Singleton, BaseExecutor, FileWriterMixin):
 
     def _init(self, name, start_time, end_time, interval):
         super().__init__(name, start_time, end_time, interval)

@@ -3,7 +3,7 @@ import os
 import logging
 from datetime import datetime, timedelta
 from abc import ABC, abstractmethod
-from breeze_trade_engine.common.utils import is_trading_day
+from breeze_trade_engine.common.date_utils import is_trading_day
 
 
 class Singleton:
@@ -66,6 +66,7 @@ class BaseExecutor(ABC):
         if not self.active_today:
             return
         self.process_day_end()
+        self.active_today = False
         print("Trading day has ended. Performing cleanup and deactivating {self.name}.")
 
     @abstractmethod
