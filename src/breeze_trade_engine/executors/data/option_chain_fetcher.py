@@ -9,15 +9,17 @@ from breeze_trade_engine.common.file_utils import FileWriterMixin
 
 MAX_CONSECUTIVE_FAILURES = 30
 
-
+LOG_LEVEL=logging.INFO
 class OptionChainDataFetcher(Singleton, AsyncBaseExecutor, FileWriterMixin):
 
     def __init__(self, name, start_time, end_time, interval):
         AsyncBaseExecutor.__init__(self, name, start_time, end_time, interval)
         self.logger = logging.getLogger(__name__)
+        self.logger.setLevel(LOG_LEVEL)
         app_key = os.environ.get("BREEZE_APP_KEY")
         # Initialize SDK
         self.breeze = BreezeConnect(api_key=app_key)
+        self.logger.info(f"Breeze SDK initialized.{self.breeze}")
         self.consecutive_failures = 0
         self.file = None
         
@@ -30,7 +32,7 @@ class OptionChainDataFetcher(Singleton, AsyncBaseExecutor, FileWriterMixin):
         await self._refresh_breeze_connection()
         # Create a filename for the CSV file based on the current date
         today = datetime.now().strftime("%Y-%m-%d")
-        self.file = f"{os.environ.get("FILE_PATH")}/nifty_chain_{today}.csv"
+        self.file = f"{os.environ.get("DATA_PATH")}/nifty_chain_{today}.csv"
         self.logger.info("Day begin logic executed.")
 
     async def process_day_end(self):
@@ -45,7 +47,7 @@ class OptionChainDataFetcher(Singleton, AsyncBaseExecutor, FileWriterMixin):
         self.handle_consecutive_failures()
         quotes = await self._get_option_chain()
         if quotes and len(quotes) > 0:
-            await self.write_to_csv(quotes, self.file, self.logger)
+            await self.write_to_csv(quotes)
             self.notify_subscribers(quotes)
         
 
@@ -74,8 +76,9 @@ class OptionChainDataFetcher(Singleton, AsyncBaseExecutor, FileWriterMixin):
     async def _refresh_breeze_connection(self):
         self.consecutive_failures = 0  # reset the consecutive failures on day begin
         load_dotenv()  # refresh the environment variables from .env file
-        session_token = os.environ.get("BREEZE_SESSION_TOKEN")
         secret_key = os.environ.get("BREEZE_SECRET_KEY")
+        session_token = os.environ.get("BREEZE_SESSION_TOKEN")
+        self.logger.info(f"Secret key: {secret_key}")
         self.logger.info(f"Session token: {session_token}")
         if session_token:
             try:
@@ -85,9 +88,11 @@ class OptionChainDataFetcher(Singleton, AsyncBaseExecutor, FileWriterMixin):
                 self.logger.info("Connected to Breeze.")
             except Exception as e:
                 self.logger.error(f"Error connecting. {e}")
+                self.logger.critical("Stopping the fetch.")
                 self.stop()
         else:
             self.logger.critical("Missing environment variable BREEZE_SESSION_TOKEN.")
+            self.logger.critical("Stopping the fetch.")
             self.stop()
 
     # call the breeze api to get quotes for a given expiry and right
@@ -104,6 +109,7 @@ class OptionChainDataFetcher(Singleton, AsyncBaseExecutor, FileWriterMixin):
             )
             if data and data["Success"]:
                 self.consecutive_failures = 0
+                # TODO: find better check to remove zero rows
                 non_zero_quotes = [
                     q
                     for q in data["Success"]
