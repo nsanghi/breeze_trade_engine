@@ -6,7 +6,7 @@ import os
 
 class FileWriterMixin:
 
-    def write_to_csv(self, data):
+    async def write_to_csv(self, data):
         """
         Function to write data to a CSV file
         """
@@ -22,11 +22,14 @@ class FileWriterMixin:
 
         # Write DataFrame to CSV (using pandas)
         df.to_csv(
-            self.file, mode="a", index=False, header=not os.path.exists(self.file)
+            self.file,
+            mode="a",
+            index=False,
+            header=not os.path.exists(self.file),
         )
         self.logger.info(f"Data written to {self.file}.")
 
-    def write_to_parquet(self, delete_csv=True):
+    async def write_to_parquet(self, delete_csv=True):
         """
         Function to write data to a Parquet file
         """

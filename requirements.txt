@@ -9,5 +9,6 @@ python-dotenv
 
 # for development
 pytest
+pytest-asyncio
 ipykernel
 jupyterlab

@@ -4,16 +4,16 @@ import os
 from dotenv import load_dotenv
 from breeze_connect import BreezeConnect
 from breeze_trade_engine.common.date_utils import get_next_weekly_expiry
-from breeze_trade_engine.executors.base_executor import BaseExecutor, Singleton
+from breeze_trade_engine.executors.async_base_executor import AsyncBaseExecutor, Singleton
 from breeze_trade_engine.common.file_utils import FileWriterMixin
 
 MAX_CONSECUTIVE_FAILURES = 30
 
 
-class OptionChainDataFetcher(Singleton, BaseExecutor, FileWriterMixin):
+class OptionChainDataFetcher(Singleton, AsyncBaseExecutor, FileWriterMixin):
 
     def __init__(self, name, start_time, end_time, interval):
-        BaseExecutor.__init__(self, name, start_time, end_time, interval)
+        AsyncBaseExecutor.__init__(self, name, start_time, end_time, interval)
         self.logger = logging.getLogger(__name__)
         app_key = os.environ.get("BREEZE_APP_KEY")
         # Initialize SDK
@@ -24,32 +24,32 @@ class OptionChainDataFetcher(Singleton, BaseExecutor, FileWriterMixin):
     # TODO: Write test cases for this class also check actual data fetch
     # TODO: Think of subscription and notification mechanism for subscribers
 
-    def process_day_begin(self):
+    async def process_day_begin(self):
         # implemented the abstract method
         # refresh bezze connection
-        self._refresh_breeze_connection
+        await self._refresh_breeze_connection()
         # Create a filename for the CSV file based on the current date
         today = datetime.now().strftime("%Y-%m-%d")
         self.file = f"{os.environ.get("FILE_PATH")}/nifty_chain_{today}.csv"
         self.logger.info("Day begin logic executed.")
 
-    def process_day_end(self):
+    async def process_day_end(self):
         # Write the csv to parquet and delete csv
         self.write_to_parquet(delete_csv=True)
         self.file = None # remove reference to today's file
         self.logger.info("Day end logic executed.")
 
-    def process_event(self):
+    async def process_event(self):
         # implemented the abstract method
         # Main processing logic to fire live quote fetch from Breeze
         self.handle_consecutive_failures()
-        quotes = self._get_option_chain()
+        quotes = await self._get_option_chain()
         if quotes and len(quotes) > 0:
-            self.write_to_csv(quotes, self.file, self.logger)
+            await self.write_to_csv(quotes, self.file, self.logger)
             self.notify_subscribers(quotes)
         
 
-    def _get_option_chain(self):
+    async def _get_option_chain(self):
         """
         Use this function to return the live option chain data for a given symbol 
         and expirty date at current time 
@@ -59,8 +59,8 @@ class OptionChainDataFetcher(Singleton, BaseExecutor, FileWriterMixin):
         expiry_date = get_next_weekly_expiry()
 
         quotes = []
-        quotes_call = self._get_chain_quotes(expiry_date, "call")
-        quotes_put = self._get_chain_quotes(expiry_date, "put")
+        quotes_call = await self._get_chain_quotes(expiry_date, "call")
+        quotes_put = await self._get_chain_quotes(expiry_date, "put")
         if quotes_call:
             quotes = quotes + quotes_call
         if quotes_put:
@@ -71,7 +71,7 @@ class OptionChainDataFetcher(Singleton, BaseExecutor, FileWriterMixin):
             quote["quote_time"] = quote_time
         return quotes
 
-    def _refresh_breeze_connection(self):
+    async def _refresh_breeze_connection(self):
         self.consecutive_failures = 0  # reset the consecutive failures on day begin
         load_dotenv()  # refresh the environment variables from .env file
         session_token = os.environ.get("BREEZE_SESSION_TOKEN")
@@ -82,18 +82,18 @@ class OptionChainDataFetcher(Singleton, BaseExecutor, FileWriterMixin):
                 self.breeze.generate_session(
                     api_secret=secret_key, session_token=session_token
                 )
-                self.looger.info("Connected to Breeze.")
+                self.logger.info("Connected to Breeze.")
             except Exception as e:
-                self.looger.error(f"Error connecting. {e}")
+                self.logger.error(f"Error connecting. {e}")
                 self.stop()
         else:
-            self.looger.critical("Missing environment variable BREEZE_SESSION_TOKEN.")
+            self.logger.critical("Missing environment variable BREEZE_SESSION_TOKEN.")
             self.stop()
 
     # call the breeze api to get quotes for a given expiry and right
     # filter out zero rows
-    def _get_chain_quotes(self, expiry_date, right):
-        self.looger.info(f"Fetching quotes for {right} with expiry {expiry_date[:10]}.")
+    async def _get_chain_quotes(self, expiry_date, right):
+        self.logger.info(f"Fetching quotes for {right} with expiry {expiry_date[:10]}.")
         try:
             data = self.breeze.get_option_chain_quotes(
                 stock_code="NIFTY",
@@ -109,17 +109,17 @@ class OptionChainDataFetcher(Singleton, BaseExecutor, FileWriterMixin):
                     for q in data["Success"]
                     if int(q["best_bid_quantity"]) + int(q["best_offer_quantity"]) > 0
                 ]
-                self.looger.info(f"Quotes fetched: {len(non_zero_quotes)}")
+                self.logger.info(f"Quotes fetched: {len(non_zero_quotes)}")
                 return non_zero_quotes
             else:
                 self.consecutive_failures += 1
-                self.looger.critical(
+                self.logger.critical(
                     f"API call never fired. Check if you have an active session."
                 )
                 return None
         except Exception as e:
             self.consecutive_failures += 1
-            self.looger.error(f"API call failed: {e}")
+            self.logger.error(f"API call failed: {e}")
             return None
 
     # Function to handle consecutive API call failures

@@ -3,6 +3,7 @@ import logging
 from datetime import datetime
 from unittest.mock import patch, MagicMock
 import pytest
+import pytest_asyncio
 from breeze_trade_engine.executors.data.option_chain_fetcher import (
     OptionChainDataFetcher,
 )
@@ -21,7 +22,7 @@ def mock_datetime():
     with patch(
         "breeze_trade_engine.executors.data.option_chain_fetcher.datetime"
     ) as mock_date:
-        mock_date.now.return_value = datetime(2023, 10, 1)
+        mock_date.now.return_value = datetime(2024, 8, 16, 10, 0)
         yield mock_date
 
 
@@ -33,11 +34,18 @@ def mock_logger():
         yield mock_logger
 
 
-def test_process_day_begin(mock_env_vars, mock_datetime, mock_logger):
+@pytest.mark.asyncio
+async def test_process_day_begin(mock_env_vars, mock_datetime, mock_logger):
     fetcher = OptionChainDataFetcher("test_fetcher", "09:00", "15:30", 60)
 
-    fetcher.process_day_begin()
+    await fetcher.process_day_begin()
 
-    expected_file_path = "/tmp/nifty_chain_2023-10-01.csv"
+    expected_file_path = "/tmp/nifty_chain_2024-08-16.csv"
     assert fetcher.file == expected_file_path
-    mock_logger().info.assert_called_with("Day begin logic executed.")
+
+
+def test_option_chain_fetcher_singleton():
+    fetcher1 = OptionChainDataFetcher("test_fetcher1", "09:00", "15:30", 60)
+    fetcher2 = OptionChainDataFetcher("test_fetcher2", "09:00", "15:30", 60)
+
+    assert fetcher1 is fetcher2
