@@ -3,7 +3,7 @@ from breeze_trade_engine.common.file_utils import FileWriterMixin
 from breeze_trade_engine.executors.base_executor import BaseExecutor, Singleton
 
 
-class StrategyOneExecutor(BaseExecutor, FileWriterMixin, metaclass=Singleton):
+class StrategyOneExecutor(Singleton, BaseExecutor, FileWriterMixin):
 
     def __init__(self, name, start_time, end_time, interval):
         BaseExecutor.__init__(name, start_time, end_time, interval)

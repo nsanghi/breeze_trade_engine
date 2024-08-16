@@ -10,7 +10,7 @@ from breeze_trade_engine.common.file_utils import FileWriterMixin
 MAX_CONSECUTIVE_FAILURES = 30
 
 
-class OptionChainDataFetcher(BaseExecutor, FileWriterMixin, metaclass=Singleton):
+class OptionChainDataFetcher(Singleton, BaseExecutor, FileWriterMixin):
 
     def __init__(self, name, start_time, end_time, interval):
         BaseExecutor.__init__(self, name, start_time, end_time, interval)
@@ -51,8 +51,8 @@ class OptionChainDataFetcher(BaseExecutor, FileWriterMixin, metaclass=Singleton)
 
     def _get_option_chain(self):
         """
-        Use this function to return the live option chain data for a given symbol and expirty date
-        at current time
+        Use this function to return the live option chain data for a given symbol 
+        and expirty date at current time 
         All breeze calls to be abstracted in common package
         """
         quote_time = datetime.now()  # stamp the time the quotes were fetched
