@@ -6,6 +6,7 @@ python-dotenv
 scipy
 numpy
 python-dotenv
+py_vollib_vectorized
 
 # for development
 pytest
