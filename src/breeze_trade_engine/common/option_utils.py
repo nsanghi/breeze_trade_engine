@@ -28,8 +28,9 @@ def calculate_expiry_time(row, ref_date=None):
     ).days / 252
 
 
-def calclate_iv_greeks(
+def insert_iv_greeks(
     df: pd.DataFrame,
+    price=None,
     delta=False,
     gamma=False,
     rho=False,
@@ -39,14 +40,27 @@ def calclate_iv_greeks(
     """
     Function to calculate implied volatility for an option chain
     Data Frame must have columns:
-    - spot_price, best_bid_price, best_offer_price, strike_price, right, expiry_date
+    - spot_price, price, strike_price, right, expiry_date
+    - spot_price is the spot price of underlying
+    - price is the current option price, usually the mid price of the bid and ask
     """
-    df["mid_price"] = (df["best_bid_price"] + df["best_offer_price"]) / 2
+    req_columns = [
+        "spot_price",
+        "price",
+        "strike_price",
+        "right",
+        "expiry_date",
+    ]
+    if not set(req_columns).issubset(df.columns):
+        raise ValueError(
+            f"DataFrame must contain the following columns: {req_columns}"
+        )
+
     df["t"] = df.apply(lambda row: calculate_expiry_time(row), axis=1)
     df["flag"] = df["right"].apply(lambda x: "c" if x == "Call" else "p")
 
     fun_args = {
-        "price": df["mid_price"],
+        "price": df["price"],
         "S": df["spot_price"],
         "K": df["strike_price"],
         "t": df["t"],
@@ -80,6 +94,12 @@ def calculate_rv(df: pd.DataFrame, window=30):
     """
     Function to calculate realised volatility based on minute level tick
     """
+    req_columns = ["close"]
+    if not set(req_columns).issubset(df.columns):
+        raise ValueError(
+            f"DataFrame must contain the following columns: {req_columns}"
+        )
+
     # Calculate log returns
     df["log_return"] = np.log(df["close"] / df["close"].shift(1))
 
@@ -91,10 +111,10 @@ def calculate_rv(df: pd.DataFrame, window=30):
         TRADING_MIN_IN_DAY * DAYS_IN_YEAR
     )  # Annualization factor
 
-    return df
+    return df["rv"].iloc[-1]
 
 
-def get_ATM_data(df, ref_price=None, in_money=True):
+def filter_for_ATM(df, ref_price=None, in_money=True):
     """
     Filters a DataFrame containing option data to ATM options.
 
@@ -109,6 +129,18 @@ def get_ATM_data(df, ref_price=None, in_money=True):
     Returns:
         pd.DataFrame: Filtered DataFrame containing the selected rows.
     """
+
+    req_columns = [
+        "expiry_date",
+        "strike_price",
+        "spot_price",
+        "right",
+        "quote_time",
+    ]
+    if not set(req_columns).issubset(df.columns):
+        raise ValueError(
+            f"DataFrame must contain the following columns: {req_columns}"
+        )
 
     # Copy spot_price or use ref_price
     df["ref_price"] = df["spot_price"] if ref_price is None else ref_price

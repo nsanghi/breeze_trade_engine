@@ -26,7 +26,7 @@ def get_next_weekly_expiry(current_date=datetime.now()):
                      today's date.
 
     Returns:
-        A tz formatted string representing next weekly exipry of NIFTY50 options.
+        A Next weekly exipry of NIFTY50 options.
     """
 
     # Calculate the number of days to the next Thursday
@@ -34,7 +34,7 @@ def get_next_weekly_expiry(current_date=datetime.now()):
     next_expiry = current_date + timedelta(days=days_to_next_thursday)
     if not is_trading_day(next_expiry):
         next_expiry = next_expiry - timedelta(days=1)
-    return next_expiry.strftime("%Y-%m-%dT15:30:00.000Z")
+    return next_expiry
 
 
 def get_all_expiry_dates(current_date=datetime.now()):
@@ -73,7 +73,9 @@ def get_all_expiry_dates(current_date=datetime.now()):
         next_month = (current_date.month + i) % 12
         next_year = current_date.year + ((current_date.month + i) // 12)
         last_day_of_month = calendar.monthrange(next_year, next_month)[1]
-        last_thursday_of_month = datetime(next_year, next_month, last_day_of_month)
+        last_thursday_of_month = datetime(
+            next_year, next_month, last_day_of_month
+        )
         while last_thursday_of_month.weekday() != calendar.THURSDAY:
             last_thursday_of_month -= timedelta(days=1)
         monthly_expiries.append(last_thursday_of_month)

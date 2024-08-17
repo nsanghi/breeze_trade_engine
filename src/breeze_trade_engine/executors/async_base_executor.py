@@ -63,14 +63,13 @@ class AsyncBaseExecutor(ABC):
         """
         pass
 
-    async def process_notification(self, data: dict) -> None:
+    async def process_notification(self, data) -> None:
         """
         Process a notification asynchronously.
         This method should be implemented by derived classes to handle
         notifications from publishers.
         """
         try:
-            # Implementation here
             pass
         except Exception as e:
             self.logger.error(f"Error processing notification: {e}")
