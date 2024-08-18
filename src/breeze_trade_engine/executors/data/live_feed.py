@@ -1,12 +1,12 @@
 import logging
-from breeze_trade_engine.common.file_utils import FileWriterMixin
 from breeze_trade_engine.executors.async_base_executor import (
-    AsyncBaseExecutor,
     Singleton,
+    AsyncBaseExecutor,
+    Subscriber,
 )
 
 
-class LiveFeed(Singleton, AsyncBaseExecutor, FileWriterMixin):
+class LiveFeed(Singleton, AsyncBaseExecutor, Subscriber):
 
     def __init__(self, name, start_time, end_time, interval):
         AsyncBaseExecutor.__init__(self, name, start_time, end_time, interval)
@@ -22,6 +22,10 @@ class LiveFeed(Singleton, AsyncBaseExecutor, FileWriterMixin):
     async def process_day_end(self):
         # TODO: Add day end cleanup logic here (move csv to paraquet, and delete csv)
         self.logger.info("Day end logic executed.")
+
+    async def process_notification(self, topic, event):
+        # TODO: We could use this to trigger data arrival in livefeed
+        pass
 
     async def process_event(self):
         # TODO: Add main processing logic here for each tick or data arrival in livefeed

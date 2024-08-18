@@ -12,11 +12,12 @@ from breeze_trade_engine.common.option_utils import (
 from breeze_trade_engine.executors.async_base_executor import (
     AsyncBaseExecutor,
     Singleton,
+    Subscriber,
 )
 from breeze_trade_engine.provider.breeze import BreezeData
 
 
-class StrategyOneExecutor(Singleton, AsyncBaseExecutor):
+class StrategyOneExecutor(Singleton, AsyncBaseExecutor, Subscriber):
 
     def __init__(self, name, start_time, end_time, interval):
         AsyncBaseExecutor.__init__(name, start_time, end_time, interval)
@@ -32,21 +33,28 @@ class StrategyOneExecutor(Singleton, AsyncBaseExecutor):
         await self.conn.refresh()
         # Create a filename for the CSV file based on the current date
         today = datetime.now().strftime("%Y-%m-%d")
-        self.file = f"{os.environ.get("DATA_PATH")}/vol_series/nifty_vol_series_{today}.csv"
+        data_path = os.environ.get("DATA_PATH")
+        self.file = f"{data_path}/vol_series/nifty_vol_series_{today}.csv"
         # Define the column names
-        columns = ['datetime', "expiry_date", 'spot_price', 'iv', 'rv', 'spread', 'sma_spread']
+        columns = [
+            "datetime",
+            "expiry_date",
+            "spot_price",
+            "iv",
+            "rv",
+            "spread",
+            "sma_spread",
+        ]
         # Create an empty dataframe
         self.vol_series = pd.DataFrame({col: [] for col in columns})
         self.logger.info("Day begin logic executed.")
 
-
     async def process_day_end(self):
         # Day end cleanup logic here (move csv to paraquet, and delete csv)
         write_to_parquet(self.file, self.logger, delete_csv=True)
-        self.file = None # remove reference to today's file
-        self.vol_series = None # remove reference to today's vol series
+        self.file = None  # remove reference to today's file
+        self.vol_series = None  # remove reference to today's vol series
         self.logger.info("Day end logic executed.")
-
 
     async def process_event(self):
         # TODO: Add main processing logic
@@ -69,11 +77,13 @@ class StrategyOneExecutor(Singleton, AsyncBaseExecutor):
         df = insert_iv_greeks(df)
         # calculate spread
         rv = self._get_rv()
-        iv = df["iv"].mean(skipna=True) # two rows - ATM put and call
+        iv = df["iv"].mean(skipna=True)  # two rows - ATM put and call
         spread = iv - rv
         # calculate sma spread
-        sma_spread = (self.vol_series["spread"].tail(self.WINDOW_MINS-1).values.sum()
-                      +spread)/self.WINDOW_MINS
+        sma_spread = (
+            self.vol_series["spread"].tail(self.WINDOW_MINS - 1).values.sum()
+            + spread
+        ) / self.WINDOW_MINS
         new_row = {
             "datetime": df["quote_time"].iloc[0],
             "expiry_date": df["expiry_date"].iloc[0],
@@ -84,17 +94,28 @@ class StrategyOneExecutor(Singleton, AsyncBaseExecutor):
             "sma_spread": sma_spread,
         }
         self.vol_series = self.vol_series.append(new_row, ignore_index=True)
-        # we now fire the csv write in a separate task and not wait for it
-        asyncio.create_task(write_to_csv(self.vol_series, self.file, self.logger, mode="w"))
-        # we also fire the trade decision logic in a separate task and not wait for it
-        asyncio.create_task(self._make_trade_decision(df))
- 
+        await asyncio.get_running_loop().loop.run_in_executor(
+            self.executor,
+            write_to_csv,
+            self.vol_series,
+            self.file,
+            self.logger,
+            "w",
+        )
+        # above is async version of write_to_csv
+        # write_to_csv(self.vol_series, self.file, self.logger, mode="w")
+
+        # we also fire the trade decision logic
+        # send it the original api data - not required but no harm
+        await self._make_trade_decision(df)
+
     async def _make_trade_decision(self, df):
         # TODO: Add trade decision logic here
         """
         calculate the trade decision based on the spread and sma spread crossover
         """
-                    
+        pass
+
     def _get_rv(self):
         # calculate rv
         # fetch close price, calculate rv, iv, and greeks
@@ -106,10 +127,9 @@ class StrategyOneExecutor(Singleton, AsyncBaseExecutor):
         ohlc_data = self.conn.get_ohlcv_data(from_date, to_date)
         df_ohlcv = pd.DataFrame(ohlc_data)
         if ohlc_data and len(ohlc_data) > 0:
-            rv = calculate_rv(
-                df_ohlcv, window=self.WINDOW_MINS
-            )
+            rv = calculate_rv(df_ohlcv, window=self.WINDOW_MINS)
         else:
-            rv = self.vol_series["rv"].iloc[-1] # for safety store last rv value
+            rv = self.vol_series["rv"].iloc[
+                -1
+            ]  # for safety store last rv value
         return rv
-
