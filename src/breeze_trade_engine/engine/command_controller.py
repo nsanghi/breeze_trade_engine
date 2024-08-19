@@ -1,7 +1,6 @@
 import json
 import os
 import argparse
-from datetime import time
 from dotenv import load_dotenv
 
 
@@ -12,12 +11,13 @@ def send_command(action, target=None, params=None):
     if params:
         command["params"] = params
 
-    path = os.getenv("DIR_PATH", "data")
+    path = os.getenv("DIR_PATH", "logs")
     with open(f"{path}/manager_commands.json", "w") as f:
         json.dump(command, f)
 
 
 def main():
+    load_dotenv()
     parser = argparse.ArgumentParser(description="Control the System")
     parser.add_argument(
         "action",
@@ -42,8 +42,12 @@ def main():
         choices=["option_chain", "live_feed", "strategy_one"],
         help="Process to add",
     )
-    parser.add_argument("--start-time", help="Start time for the new process (HH:MM)")
-    parser.add_argument("--end-time", help="End time for the new process (HH:MM)")
+    parser.add_argument(
+        "--start-time", help="Start time for the new process (HH:MM)"
+    )
+    parser.add_argument(
+        "--end-time", help="End time for the new process (HH:MM)"
+    )
     parser.add_argument(
         "--interval", type=int, help="Interval in seconds for the new process"
     )
@@ -78,5 +82,4 @@ def main():
 
 
 if __name__ == "__main__":
-    load_dotenv()
     main()

@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 
 
-async def write_to_csv(data, file, logger, mode="a"):
+def write_to_csv(data, file, logger, mode="a"):
     """
     Function to write data to a CSV file
     """
@@ -31,7 +31,7 @@ async def write_to_csv(data, file, logger, mode="a"):
     logger.info(f"Data written to {file}.")
 
 
-async def write_to_parquet(file, logger, delete_csv=True):
+def write_to_parquet(file, logger, delete_csv=True):
     """
     Function to write data from `file` csv file to a Parquet file
     """

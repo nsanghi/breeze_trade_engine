@@ -164,3 +164,4 @@ cython_debug/
 # local run logs
 /logs
 /playground
+/data

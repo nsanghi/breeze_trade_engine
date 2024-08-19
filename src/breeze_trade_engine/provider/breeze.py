@@ -51,7 +51,7 @@ class BreezeData(Singleton):
                 )
                 self.logger.info("Connected to Breeze.")
             except Exception as e:
-                self.flogger.error(
+                self.logger.error(
                     f"Error connecting. No Fetching will happen",
                     "Check enviroment file for correct breeze settings",
                     "The error is{e}",

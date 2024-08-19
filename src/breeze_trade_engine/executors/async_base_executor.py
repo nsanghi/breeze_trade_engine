@@ -3,7 +3,6 @@ import logging
 from datetime import datetime, timedelta
 from abc import ABC
 from concurrent.futures import ThreadPoolExecutor
-import time
 from breeze_trade_engine.common.date_utils import is_trading_day
 
 
@@ -89,13 +88,9 @@ class AsyncBaseExecutor(ABC):
             return
         self.running = True
         self.logger.info(f"Process {self.name} set to start running")
-        if not self.task or (self.task and self.task.done()):
-            self.task = asyncio.create_task(self.run_daily_cycle())
-            self.logger.info(f"Started async task for process: {self.name}")
-        else:
-            self.logger.warning(
-                f"Async task for {self.name} is already running"
-            )
+
+        self.task = asyncio.create_task(self.run_daily_cycle())
+        self.logger.info(f"Started async task for process: {self.name}")
 
     async def stop(self):
         if not self.running:
@@ -168,44 +163,49 @@ class AsyncBaseExecutor(ABC):
             self.logger.error(f"Error during day end for {self.name}: {e}")
 
     async def run_daily_cycle(self):
-        while self.running:
-            now = datetime.now()
-            today = now.date()
+        while True:
+            if self.running:
+                now = datetime.now()
+                today = now.date()
 
-            if not is_trading_day(today):
-                self.logger.info(
-                    f"{today} is not a trading day. Sleeping till tomorrow."
-                )
-                await asyncio.sleep(self.seconds_to_tomorrow_begin())
-            elif now.time() < self.start_time:
-                sleep_seconds = (
-                    datetime.combine(today, self.start_time) - now
-                ).total_seconds()
-                self.logger.info(
-                    f"Sleeping for {sleep_seconds:.2f} seconds until day begin"
-                )
-                await asyncio.sleep(sleep_seconds)
-            elif self.start_time <= now.time() < self.end_time:
-                if not self.active_today:
-                    await self.day_begin()
-
-                # process the tick
-                try:
-                    await self.process_event()
-                except Exception as e:
-                    self.logger.error(f"Error during event processing: {e}")
-                next_fetch += timedelta(seconds=self.interval)
-                sleep_time = (next_fetch - datetime.now()).total_seconds()
-                if sleep_time > 0:
-                    await asyncio.sleep(sleep_time)
-            elif now.time() > self.end_time:
-                if self.running:
-                    await self.day_end()
+                if not is_trading_day(today):
+                    self.logger.info(
+                        f"{today} is not a trading day. Sleeping till tomorrow."
+                    )
                     await asyncio.sleep(self.seconds_to_tomorrow_begin())
+                elif now.time() < self.start_time:
+                    sleep_seconds = (
+                        datetime.combine(today, self.start_time) - now
+                    ).total_seconds()
+                    self.logger.info(
+                        f"Sleeping for {sleep_seconds:.2f} seconds until day begin"
+                    )
+                    await asyncio.sleep(sleep_seconds)
+                elif self.start_time <= now.time() < self.end_time:
+                    if not self.active_today:
+                        await self.day_begin()
+
+                    # process the tick
+                    try:
+                        await self.process_event()
+                    except Exception as e:
+                        self.logger.error(f"Error during event processing: {e}")
+                    next_fetch = now + timedelta(seconds=self.interval)
+                    sleep_time = (next_fetch - datetime.now()).total_seconds()
+                    sleep_time = max(0, sleep_time)
+                    self.logger.info(f"Sleeping for {sleep_time:.2f} seconds")
+                    await asyncio.sleep(sleep_time)
+                elif now.time() > self.end_time:
+                    if self.running:
+                        await self.day_end()
+                        await asyncio.sleep(self.seconds_to_tomorrow_begin())
+                else:
+                    self.logger.warning(
+                        "Invalid state reached. Check logic. now = {now}"
+                    )
             else:
-                self.logger.warning(
-                    "Invalid state reached. Check logic. now = {now}"
-                )
+                self.logger.info(f"Process {self.name} is not running.")
+                await asyncio.sleep(self.interval)
 
     def seconds_to_tomorrow_begin(self):
         now = datetime.now()

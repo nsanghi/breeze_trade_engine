@@ -94,7 +94,7 @@ class StrategyOneExecutor(Singleton, AsyncBaseExecutor, Subscriber):
             "sma_spread": sma_spread,
         }
         self.vol_series = self.vol_series.append(new_row, ignore_index=True)
-        await asyncio.get_running_loop().loop.run_in_executor(
+        await asyncio.get_running_loop().run_in_executor(
             self.executor,
             write_to_csv,
             self.vol_series,

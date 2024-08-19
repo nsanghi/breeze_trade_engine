@@ -50,11 +50,11 @@ class OptionChainDataFetcher(Singleton, AsyncBaseExecutor, Subscriber):
         self.handle_consecutive_failures()
         quotes = await self._get_option_chain()
         if quotes and len(quotes) > 0:
-            await asyncio.get_running_loop().loop.run_in_executor(
+            await asyncio.get_running_loop().run_in_executor(
                 self.executor, write_to_csv, quotes, self.file, self.logger
             )
-            # await write_to_csv(quotes, self.file, self.logger)
-            await self.notify_subscribers(quotes)
+
+            await self.notify_subscribers("default", quotes)
         else:
             self.logger.error("No quotes fetched.")
             self.consecutive_failures += 1
