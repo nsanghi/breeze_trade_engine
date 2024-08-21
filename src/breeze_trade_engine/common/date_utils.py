@@ -3,6 +3,20 @@ from datetime import datetime, timedelta
 import calendar
 
 
+def is_expiry_day(day=datetime.now().date()):
+    """
+    Check if the given day is an expiry day for NIFTY50 options.
+
+    Args:
+        day: The day to check. Can be a string in the format "YYYY-MM-DD" or a
+             datetime.date object.
+
+    Returns:
+        True if the day is an expiry day, False otherwise.
+    """
+    return day.weekday() == calendar.THURSDAY
+
+
 def is_trading_day(day):
     # Read HOLIDAYS from .env file
     holidays = os.getenv("HOLIDAYS", "").split(",")

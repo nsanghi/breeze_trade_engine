@@ -50,8 +50,12 @@ class OptionChainDataFetcher(Singleton, AsyncBaseExecutor, Subscriber):
         self.handle_consecutive_failures()
         quotes = await self._get_option_chain()
         if quotes and len(quotes) > 0:
-            await asyncio.get_running_loop().run_in_executor(
-                self.executor, write_to_csv, quotes, self.file, self.logger
+            # await asyncio.get_running_loop().run_in_executor(
+            #     self.executor, write_to_csv, quotes, self.file, self.logger
+            # )
+            # replaced above with more modern idiomaic way
+            await asyncio.to_thread(
+                write_to_csv, quotes, self.file, self.logger
             )
 
             await self.notify_subscribers("default", quotes)
@@ -66,10 +70,12 @@ class OptionChainDataFetcher(Singleton, AsyncBaseExecutor, Subscriber):
         All breeze calls to be abstracted in common package
         """
         expiry_date = get_next_weekly_expiry()
-        loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(
-            self.executor, self.conn.get_option_chain, expiry_date
-        )
+        # loop = asyncio.get_running_loop()
+        # return await loop.run_in_executor(
+        #     self.executor, self.conn.get_option_chain, expiry_date
+        # )
+        # replaced above with modern idiomatic way
+        return await asyncio.to_thread(self.conn.get_option_chain, expiry_date)
 
     # Function to handle consecutive API call failures
     def handle_consecutive_failures(self):

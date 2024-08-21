@@ -2,7 +2,8 @@ import asyncio
 import logging
 from datetime import datetime, timedelta
 from abc import ABC
-from concurrent.futures import ThreadPoolExecutor
+
+# from concurrent.futures import ThreadPoolExecutor
 from breeze_trade_engine.common.date_utils import is_trading_day
 
 
@@ -48,7 +49,9 @@ class AsyncBaseExecutor(ABC):
         self.active_today = False
         self.running = False
         self.logger = logging.getLogger(__name__)
-        self.executor = ThreadPoolExecutor(max_workers=1)
+        # self.executor = ThreadPoolExecutor(
+        #     max_workers=1
+        # )  # with I/O and syncrhoous api calls moving to more modern asyncio.to_task syntax, there is no need to get an executor
         self.task = None
         self.subscribers = {}
 
@@ -114,7 +117,8 @@ class AsyncBaseExecutor(ABC):
         This method should be called to cleanup the executor and stop the process.
         """
         await self.stop()
-        self.executor.shutdown(wait=True)
+        # not required as we are using modern asyncio.to_thread syntax
+        # self.executor.shutdown(wait=True)
 
     def add_subscriber(self, topic, subscriber):
         if not isinstance(subscriber, Subscriber):
