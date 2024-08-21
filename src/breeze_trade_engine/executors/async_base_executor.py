@@ -214,8 +214,7 @@ class AsyncBaseExecutor(ABC):
                         "Invalid state reached. Check logic. now = {now}"
                     )
             else:
-                self.logger.info(f"Process {self.name} is not running.")
-                await asyncio.sleep(self.interval)
+                await asyncio.sleep(0.1)
 
     def seconds_to_tomorrow_begin(self):
         now = datetime.now()
