@@ -186,6 +186,7 @@ class StrategyOneExecutor(Singleton, AsyncBaseExecutor, Subscriber):
     async def _delta_hedge(self):
         # TODO: Delta hedge
         # This is a placeholder for the delta hedge logic
+        # would trade and delta hedge happen at different intervals?
         pass
 
     async def _place_order(self):
