@@ -35,7 +35,17 @@ class Subscriber:
 
 class AsyncBaseExecutor(ABC):
 
-    def __init__(self, name, start_time="09:15", end_time="15:30", interval=60):
+    def __init__(
+        self,
+        name,
+        start_time="09:15",
+        end_time="15:30",
+        interval=None,
+        timers=None,
+    ):
+        assert not (
+            interval and timers
+        ), "Only one of interval or timers can be provided"
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
@@ -45,6 +55,8 @@ class AsyncBaseExecutor(ABC):
         self.name = name
         self.start_time = datetime.strptime(start_time, "%H:%M").time()
         self.end_time = datetime.strptime(end_time, "%H:%M").time()
+        self.timers = timers
+        self.tasks = []
         self.interval = interval
         self.active_today = False
         self.running = False
@@ -77,6 +89,7 @@ class AsyncBaseExecutor(ABC):
         """
         This method should be implemented by the derived class to perform any
         processing logic that needs to be done at regular intervals during the trading day.
+        Only relevant if you do not provide a list of timers as it is used in the default timer only.
         """
         self.logger.info(f"Processing event for {self.name}.")
         result = None  # Placeholder for api call
@@ -153,6 +166,8 @@ class AsyncBaseExecutor(ABC):
             await self.process_day_begin()
             self.active_today = True
             self.logger.info(f"Day begin executed for {self.name}.")
+            self.start_daily_timer_scheduler()
+            self.logger.info("Started all timers.")
         except Exception as e:
             self.logger.error(f"Error during day begin for {self.name}: {e}")
 
@@ -162,6 +177,8 @@ class AsyncBaseExecutor(ABC):
         try:
             await self.process_day_end()
             self.active_today = False
+            await self.stop_daily_timer_scheduler()
+            self.logger("Stopped all timers.")
             self.logger.info(f"Day end executed for {self.name}.")
         except Exception as e:
             self.logger.error(f"Error during day end for {self.name}: {e}")
@@ -188,21 +205,10 @@ class AsyncBaseExecutor(ABC):
                 elif self.start_time <= now.time() < self.end_time:
                     if not self.active_today:
                         await self.day_begin()
-
-                    # process the tick
-                    try:
-                        await self.process_event()
-                    except Exception as e:
-                        self.logger.error(f"Error during event processing: {e}")
-                    next_fetch = now + timedelta(seconds=self.interval)
-                    sleep_time = (next_fetch - datetime.now()).total_seconds()
-                    sleep_time = max(0, sleep_time)
-                    self.logger.info(f"Sleeping for {sleep_time:.2f} seconds")
-                    await asyncio.sleep(sleep_time)
+                        # this will also start the daily timers
                 elif now.time() > self.end_time:
-                    if self.running:
-                        await self.day_end()
-                        await asyncio.sleep(self.seconds_to_tomorrow_begin())
+                    await self.day_end()
+                    await asyncio.sleep(self.seconds_to_tomorrow_begin())
                 else:
                     self.logger.warning(
                         "Invalid state reached. Check logic. now = {now}"
@@ -217,3 +223,50 @@ class AsyncBaseExecutor(ABC):
             now.date() + timedelta(days=1), self.start_time
         )
         return (next_start_time - now).total_seconds()
+
+    async def run_timer(self, interval_seconds, processing_function):
+        """
+        Runs a timer for a specified interval and executes a function when the timer expires.
+        """
+        # process the tick
+        try:
+            now = datetime.now()
+            if self.running:  #
+                await processing_function()
+        except Exception as e:
+            self.logger.error(f"Error during event processing: {e}")
+        next_fetch = now + timedelta(seconds=interval_seconds)
+        sleep_time = (next_fetch - datetime.now()).total_seconds()
+        sleep_time = max(
+            0, sleep_time
+        )  # catchup if last processing took longer
+        self.logger.info(f"Sleeping for {sleep_time:.2f} seconds")
+        await asyncio.sleep(sleep_time)
+
+    def start_daily_timer_scheduler(self):
+        if len(self.tasks) > 0:
+            self.stop_daily_timer_scheduler()  # for cleanup that did not happen previous day
+        if not self.timers:
+            self.tasks = [
+                {
+                    "interval_seconds": self.interval,
+                    "function": self.process_event,
+                }
+            ]
+            self.logger.info("Started default timer.")
+            return
+        for timer in self.timers:
+            task = asyncio.create_task(
+                self.run_timer(timer["interval_seconds"], timer["function"])
+            )
+            self.tasks.append(task)
+            self.logger.info("Started all timers.")
+
+    async def stop_daily_timer_scheduler(self):
+        for task in self.tasks:
+            try:
+                await task.cancel()
+            except asyncio.CancelledError:
+                pass
+        self.tasks = []
+        self.logger.info("Stopped all timers.")
