@@ -1,4 +1,5 @@
 import asyncio
+import inspect
 import logging
 from datetime import datetime, timedelta
 from abc import ABC
@@ -34,6 +35,40 @@ class Subscriber:
 
 
 class AsyncBaseExecutor(ABC):
+    """
+    Base class for asynchronous executors.
+    Attributes:
+        name (str): The name of the executor.
+        start_time (str): The start time of the executor in the format "HH:MM".
+        end_time (str): The end time of the executor in the format "HH:MM".
+        interval (int): The interval in seconds between each execution.
+        timers (list): A list of timers for scheduled executions.
+        tasks (list): A list of tasks for the timers.
+        active_today (bool): Flag indicating if the executor is active today.
+        running (bool): Flag indicating if the executor is currently running.
+        logger (Logger): The logger object for logging.
+        task (Task): The main task for running the daily cycle.
+        subscribers (dict): A dictionary of subscribers for different topics.
+    Methods:
+        __init__: Initialize the AsyncBaseExecutor object.
+        process_day_begin: Perform initialization logic at the beginning of the trading day.
+        process_day_end: Perform cleanup logic at the end of the trading day.
+        process_event: Perform processing logic at regular intervals during the trading day.
+        start: Start the executor.
+        stop: Stop the executor.
+        cleanup: Cleanup the executor and stop the process.
+        add_subscriber: Add a subscriber to a topic.
+        remove_subscriber: Remove a subscriber from a topic.
+        notify_subscribers: Notify subscribers of a topic with data.
+        day_begin: Perform actions at the beginning of the trading day.
+        day_end: Perform actions at the end of the trading day.
+        run_daily_cycle: Run the daily cycle of the executor.
+        seconds_to_tomorrow_begin: Calculate the number of seconds until tomorrow's start time.
+        run_timer: Run a timer for a specified interval and execute a function when the timer expires.
+        is_valid_timer_defn: Check if a timer definition is valid.
+        start_daily_timer_scheduler: Start the daily timer scheduler.
+        stop_daily_timer_scheduler: Stop the daily timer scheduler.
+    """
 
     def __init__(
         self,
@@ -43,6 +78,25 @@ class AsyncBaseExecutor(ABC):
         interval=None,
         timers=None,
     ):
+        """
+        Initialize the AsyncBaseExecutor object.
+
+        Parameters:
+        - name (str): The name of the executor.
+        - start_time (str, optional): The start time of the executor in the format "HH:MM".
+          Defaults to "09:15".
+        - end_time (str, optional): The end time of the executor in the format "HH:MM".
+          Defaults to "15:30".
+        - interval (int, optional): The interval in seconds between each execution.
+          Only one of interval or timers can be provided. Defaults to None.
+        - timers (list, optional): A list of timers for scheduled executions.
+          Only one of interval or timers can be provided. Defaults to None.
+          Each timer should be a dictionary with the following keys:
+            - 'interval_seconds' (int): The interval in seconds between each execution.
+            - 'method_name' (str): The name of the method to be executed at the end of the interval.
+              It should be a coroutine function.
+        """
+
         assert not (
             interval and timers
         ), "Only one of interval or timers can be provided"
@@ -155,7 +209,9 @@ class AsyncBaseExecutor(ABC):
         tasks = []
         for subscriber in self.subscribers[topic]:
             tasks.append(
-                asyncio.create_tas(subscriber.process_notification(topic, data))
+                asyncio.create_task(
+                    subscriber.process_notification(topic, data)
+                )
             )
         await asyncio.gather(*tasks)
 
@@ -223,15 +279,18 @@ class AsyncBaseExecutor(ABC):
         )
         return (next_start_time - now).total_seconds()
 
-    async def run_timer(self, interval_seconds, processing_function):
+    async def run_timer(self, interval_seconds, method_name):
         """
         Runs a timer for a specified interval and executes a function when the timer expires.
         """
         # process the tick
         try:
             now = datetime.now()
-            if self.running:  #
-                await processing_function()
+            if (
+                self.running
+            ):  # execute the function only if the executor is in state of "running"
+                async_func = getattr(self, method_name)
+                await async_func(self)
         except Exception as e:
             self.logger.error(f"Error during event processing: {e}")
         next_fetch = now + timedelta(seconds=interval_seconds)
@@ -242,21 +301,46 @@ class AsyncBaseExecutor(ABC):
         self.logger.info(f"Sleeping for {sleep_time:.2f} seconds")
         await asyncio.sleep(sleep_time)
 
+    def is_valid_timer_defn(self, timer):
+        if not isinstance(timer, dict):
+            return False
+        if "interval_seconds" not in timer or "method_name" not in timer:
+            return False
+        value = getattr(self, timer["method_name"], None)
+        return self.is_valid_async_method(value)
+
+    def is_valid_async_method(self, value):
+        if asyncio.iscoroutinefunction(value):
+            # Get the async function's signature (parameters)
+            signature = inspect.signature(value)
+            # Check if the function has only one parameter named 'self'
+            if (
+                len(signature.parameters) == 1
+                and "self" in signature.parameters
+            ):
+                return True
+        return False
+
     def start_daily_timer_scheduler(self):
         if len(self.tasks) > 0:
             self.stop_daily_timer_scheduler()  # for cleanup that did not happen previous day
         if not self.timers:
-            self.tasks = [
+            self.timers = [
                 {
                     "interval_seconds": self.interval,
-                    "function": self.process_event,
+                    "method_name": self.process_event,
                 }
             ]
-            self.logger.info("Started default timer.")
-            return
         for timer in self.timers:
+            # Check if the timer definition is valid
+            if not self.is_valid_timer_defn(timer):
+                self.logger.error(
+                    f"Invalid timer definition: {timer}. Skipping."
+                )
+                continue
+            # Start the timer and add it to the list of tasks
             task = asyncio.create_task(
-                self.run_timer(timer["interval_seconds"], timer["function"])
+                self.run_timer(timer["interval_seconds"], timer["method_name"])
             )
             self.tasks.append(task)
             self.logger.info("Started all timers.")
