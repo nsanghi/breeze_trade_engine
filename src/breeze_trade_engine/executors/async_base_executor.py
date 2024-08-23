@@ -101,7 +101,7 @@ class AsyncBaseExecutor(ABC):
             interval and timers
         ), "Only one of interval or timers can be provided"
         try:
-            loop = asyncio.get_running_loop()
+            self.loop = asyncio.get_running_loop()
         except RuntimeError:
             raise RuntimeError(
                 "This class can only be instantiated within an asyncio event loop"
@@ -310,16 +310,10 @@ class AsyncBaseExecutor(ABC):
         return self.is_valid_async_method(value)
 
     def is_valid_async_method(self, value):
-        if asyncio.iscoroutinefunction(value):
-            # Get the async function's signature (parameters)
-            signature = inspect.signature(value)
-            # Check if the function has only one parameter named 'self'
-            if (
-                len(signature.parameters) == 1
-                and "self" in signature.parameters
-            ):
-                return True
-        return False
+        if not hasattr(self, value):
+            return False
+        method = getattr(self, value)
+        return asyncio.iscoroutinefunction(method)
 
     def start_daily_timer_scheduler(self):
         if len(self.tasks) > 0:

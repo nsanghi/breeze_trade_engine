@@ -25,19 +25,19 @@ FEEDS = {
         },
         "callback": "process_nifty_1min_ohlcv",
     },
-    "option_feed": {
-        "config": {
-            "exchange_code": "NFO",
-            "stock_code": "NIFTY",
-            "product_type": "options",
-            "expiry_date": "<DYNAMIC>",
-            "strike_price": "<DYNAMIC>",
-            "right": "<DYNAMIC>",
-            "get_exchange_quotes": True,
-            "get_market_depth": False,
-        },
-        "callback": "process_option_feed",
-    },
+    # "option_feed": {
+    #     "config": {
+    #         "exchange_code": "NFO",
+    #         "stock_code": "NIFTY",
+    #         "product_type": "options",
+    #         "expiry_date": "<DYNAMIC>",
+    #         "strike_price": "<DYNAMIC>",
+    #         "right": "<DYNAMIC>",
+    #         "get_exchange_quotes": True,
+    #         "get_market_depth": False,
+    #     },
+    #     "callback": "process_option_feed",
+    # },
     "order_update_feed": {
         "config": {
             "get_order_notification": True,
@@ -83,9 +83,8 @@ class TestStartegy(Singleton, AsyncBaseExecutor, Subscriber):
         # TODO: Add day begin initialization logic here
         # refresh bezze connection
         self.conn.refresh()
-        self.conn.breeze.on_ticks = (
-            self.process_feed
-        )  # reestablish the callback
+        self.conn.breeze.on_ticks = self.process_feed
+        # reestablish the callback
         for feed in FEEDS:
             self._subscribe_feed(feed)
         self.logger.info("Day begin logic executed.")
@@ -120,20 +119,20 @@ class TestStartegy(Singleton, AsyncBaseExecutor, Subscriber):
                 print("No match found")
         if self.is_valid_async_method(callback):
             async_func = getattr(self, callback)
-            asyncio.create_task(self.async_process(ticks))
+            self.loop.create_task(async_func(ticks))
 
-    def process_nifty_1sec_ohlcv(self, ticks):
+    async def process_nifty_1sec_ohlcv(self, ticks):
         # TODO: implement actual logic
         print(f"Processing 1 sec ticks:{ticks}")
 
-    def process_nifty_1min_ohlcv(self, ticks):
+    async def process_nifty_1min_ohlcv(self, ticks):
         # TODO: implement actual logic
         print(f"Processing 1 min ticks:{ticks}")
 
-    def process_option_feed(self, ticks):
+    async def process_option_feed(self, ticks):
         # TODO: implement actual logic
         print(f"Processing option feed ticks:{ticks}")
 
-    def process_order_notification(self, ticks):
+    async def process_order_notification(self, ticks):
         # TODO: implement actual logic
         print(f"Processing order notification ticks:{ticks}")
