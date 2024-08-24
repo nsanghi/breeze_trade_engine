@@ -3,6 +3,7 @@ from datetime import datetime
 import logging
 import os
 from pathlib import Path
+from typing import Dict
 from breeze_trade_engine.common.date_utils import get_weekly_expiry_date
 from breeze_trade_engine.data_store import AsyncRollingDataFrame, TradeMaster
 from breeze_trade_engine.executors import (
@@ -53,8 +54,8 @@ OREDR_FEED = {
     "keep_history": True,
 }
 
-TIMERS = [
-    {
+TIMERS = {
+    "fetch_nifty_chain": {
         "type": "data",
         "interval_seconds": 60,
         "method_name": "fetch_nifty_chain_per_min",
@@ -62,7 +63,7 @@ TIMERS = [
         "topic": "timer_nifty_chain_per_min",
         "keep_history": True,
     },
-    {
+    "fetch_margin": {
         "type": "data",
         "interval_seconds": 60,
         "method_name": "fetch_margin",
@@ -70,24 +71,28 @@ TIMERS = [
         "topic": "timer_margin",
         "keep_history": True,
     },
-    {
+    "fetch_order_updates": {
         "type": "order",
         "interval_seconds": 60,
         "method_name": "fetch_order_updates",
         "topic": "timer_order_updates",
         "keep_history": True,
     },
-    {
+    "_internal_update_strike_watch": {
         "type": "internal",
         "interval_seconds": 600,
         "method_name": "update_strike_watch",
         "topic": "timer_strike_watch",
-        "keep_history": True,
+        "keep_history": False,
     },
-]
+}
 
 SUBSCRIPTION_TOPICS = (
-    [timer["topic"] for timer in TIMERS if timer["type"] != "internal"]
+    [
+        timer_config["topic"]
+        for timer_config in TIMERS.values()
+        if timer_config["type"] != "internal"
+    ]
     + [feed["topic"] for feed in DATA_FEEDS.values()]
     + [OREDR_FEED["topic"]]
 )
@@ -107,13 +112,11 @@ class StrategyOneDataManager(Singleton, AsyncBaseExecutor, Subscriber):
             self, name, start_time, end_time, interval, timers
         )
         self.logger = logging.getLogger(__name__)
-        self.consecutive_failures = 0
-        self.file = None
         self.ws_conn = BreezeData(ws_connect_flag=True)
         self.http_conn = BreezeData()
-        self.data_feeds = dict()
+        self._data_feeds: Dict[str, object] = dict()
         self.strikes_watching = None
-        self.data_frames: {str, AsyncRollingDataFrame} = dict()
+        self.data_frames: Dict[str, AsyncRollingDataFrame] = dict()
         self.trade_master = None
 
     async def process_day_begin(self):
@@ -133,74 +136,81 @@ class StrategyOneDataManager(Singleton, AsyncBaseExecutor, Subscriber):
         self.strikes_watching = self.trade_master.get_strike_prices()
 
     async def process_day_end(self):
-        self._close_data_frames()
         self._remove_all_feeds()
+        self._close_data_frames()
         self.trade_master.save()  # TODO: Check and implement TradeMaster later
         self.trade_master = None
         self.logger.info("Day end logic executed.")
 
     def _add_all_data_feeds(self):
-        for feed_key in DATA_FEEDS:
-            # for option_trade feed, we need to subscribe to multiple feeds
-            if feed_key == "option_trade" and self.strikes_watching:
+        for feed_name, feed in DATA_FEEDS.items():
+            # for option_quote feed, we need to subscribe to multiple feeds
+            # but dataframe will be single
+            if feed_name == "option_quote" and self.strikes_watching:
                 for right in ["Call", "Put"]:
                     for strike_price in self.strikes_watching:
-                        config = DATA_FEEDS["option_quote"]["config"].copy() | {
+                        config = dict(feed["config"]) | {
                             "strike_price": strike_price,
                             "expiry_date": self.expiry_date,
                             "right": right,
                         }  # merge two dictionaries
-                        feed_name = f"{feed_key}_{strike_price}"
+                        feed_name = self._feed_name(
+                            feed_name, right, strike_price
+                        )
                         self._subscribe_feed(feed_name, config)
             else:
-                config = DATA_FEEDS[feed_key]["config"].copy()
-                self._subscribe_feed(feed_key, config)
-        feed_key = "order_update"
+                config = feed["config"]
+                self._subscribe_feed(feed_name, config)
+        feed_name = "order_update"
         config = dict()
-        self._subscribe_feed(feed_key, config)
+        self._subscribe_feed(feed_name, config)
+
+    def _feed_name(self, feed_name, right, strike_price):
+        feed_name = f"{feed_name}_{right}_{strike_price}"
+        return feed_name
 
     def _remove_all_feeds(self):
-        for feed_name, feed_value in self.data_feeds.items():
+        for feed_name, feed_value in self._data_feeds.items():
             self._unsubscribe_feed(feed_name, feed_value)
 
     def _subscribe_feed(self, feed_name, config):
         self.ws_conn.breeze.subscribe_feeds(**config)
-        self.data_feeds[feed_name] = config
+        self._data_feeds[feed_name] = config
         self.logger.info(f"Subscribed to feed: {feed_name}")
 
-    def _unsubscribe_feed(self, feed_name, item):
-        self.ws_conn.breeze.unsubscribe_feeds(**item)
+    def _unsubscribe_feed(self, feed_name, config):
+        self.ws_conn.breeze.unsubscribe_feeds(**config)
         self.logger.info(f"Unsubscribed from feed: {feed_name}")
 
     def _init_data_frames(self):
         today = datetime.now().strftime("%Y-%m-%d")
         file_name = f"{today}_data.csv"
-        for feed_key in DATA_FEEDS:
-            # while we subscribe to multiple feeds for option_trade,
-            # we create single data frame only for option_trade
-            keep_history = DATA_FEEDS[feed_key]["keep_history"]
-            folder_name = Path(os.environ.get("DATA_PATH") / feed_key)
-            self.data_frames[feed_key] = AsyncRollingDataFrame(
+        for feed_name, feed_config in DATA_FEEDS.items():
+            # while we subscribe to multiple feeds for option_quote,
+            # we create single data frame only for option_quote
+            keep_history = feed_config["keep_history"]
+            folder_name = Path(os.environ.get("DATA_PATH") / feed_name)
+            self.data_frames[feed_name] = AsyncRollingDataFrame(
                 folder_name, file_name, keep_history
             )
         # Create data frames for data timers only
         # timers with type "internal" are for internal use only
         # timers with type "order" are for order updates to be handled by a different class
-        for timer in self.timers:
-            if timer["type"] != "data":
+        for _, timer_config in self.timers.items():
+            if timer_config["type"] != "data":
                 continue
-            df_name = timer["df_name"]
-            keep_history = timer["keep_history"]
+            df_name = timer_config["df_name"]
+            keep_history = timer_config["keep_history"]
             folder_name = Path(os.environ.get("DATA_PATH") / df_name)
             self.data_frames[df_name] = AsyncRollingDataFrame(
                 folder_name, file_name, keep_history
             )
-        # add a data_frame for internal use to track rv, iv, and spread
+        # TODO: add a data_frame for internal use to track rv, iv, and spread
 
     def _close_data_frames(self):
-        for feed_key in self.data_frames:
-            self.data_frames[feed_key].close()
-            del self.data_frames[feed_key]
+        for df_name, rolling_df in self.data_frames.items():
+            rolling_df.close()
+            del self.data_frames[df_name]
 
     def _modify_strikes_watch(self, new_strikes, add_only=False):
         """
@@ -216,22 +226,30 @@ class StrategyOneDataManager(Singleton, AsyncBaseExecutor, Subscriber):
             remove_strikes = set()
 
         for strike_price in remove_strikes:
-            feed_name = f"option_trade_{strike_price}"
-            self._unsubscribe_feed(feed_name, self.data_feeds[feed_name])
-            del self.data_feeds[feed_name]
+            feed_name = self._feed_name("option_quote", strike_price)
+            config = self._data_feeds[feed_name]
+            self._unsubscribe_feed(feed_name, config)
+            del self._data_feeds[feed_name]
         for strike_price in add_strikes:
-            feed_value = DATA_FEEDS["option_trade"].copy()
-            feed_value["strike_price"] = strike_price
-            feed_value["expiry_date"] = self.expiry_date
-            feed_name = f"option_trade_{strike_price}"
-            self._subscribe_feed(feed_name, feed_value)
+            for right in ["Call", "Put"]:
+                feed_name = self._feed_name("option_quote", right, strike_price)
+                feed = DATA_FEEDS["option_quote"]
+            config = dict(feed["config"]) | {
+                "strike_price": strike_price,
+                "expiry_date": self.expiry_date,
+                "right": right,
+            }  # merge two dictionaries
+            feed_name = self._feed_name(feed_name, strike_price)
+            self._subscribe_feed(feed_name, config)
+
         self.strikes_watching += add_strikes - remove_strikes
 
     async def process_event(self, **kwargs):
         """
         This method should be implemented by the derived class to perform any
         processing logic that needs to be done at regular intervals during the trading day.
-        Only relevant if you do not provide a list of timers as it is used in the default timer only.
+        Only relevant if you do not provide a list of timers
+        as it is used in the default timer config only.
         """
         # TODO: this class is not using the default timer, so this method is not needed
         # check and remove it from this class
@@ -248,32 +266,35 @@ class StrategyOneDataManager(Singleton, AsyncBaseExecutor, Subscriber):
 
     def process_feed(self, ticks):
         # if executor not in running state, do not process the ticks
-        if not self.running:
-            return
-        topic = None
-        match ticks:
-            case {"interval": "1second", "stock_code": "NIFTY"}:
-                key = "nifty_1sec_ohlcv"
-            case {"interval": "1minute", "stock_code": "NIFTY"}:
-                key = "nifty_1min_ohlcv"
-            case {"stock_name": "NIFTY 50"}:
-                key = "option_trade"
-            case {"orderDate": _}:
-                key = "order_update"
-            case _:
-                print("No match found")
+        try:
+            if not self.running:
                 return
-        # send data to respective rolling data frame
-        df = self.data_frames[key]
-        self.event_loop.create_task(df.add_data(ticks))
-        # notify subscribers
-        if key in DATA_FEEDS:
-            topic = DATA_FEEDS[key]["topic"]
-        elif key == "order_update":
-            topic = OREDR_FEED["topic"]
-        self.event_loop.create_task(self.notify_subscribers(topic, ticks))
+            topic = None
+            match ticks:
+                case {"interval": "1second", "stock_code": "NIFTY"}:
+                    feed_name = "nifty_1sec_ohlcv"
+                case {"interval": "1minute", "stock_code": "NIFTY"}:
+                    feed_name = "nifty_1min_ohlcv"
+                case {"stock_name": "NIFTY 50"}:
+                    feed_name = "option_quote"
+                case {"orderDate": _}:
+                    feed_name = "order_update"
+                case _:
+                    print("No match found")
+                    return
+            # send data to respective rolling data frame
+            df = self.data_frames[feed_name]
+            self.event_loop.create_task(df.add_data(ticks))
+            # notify subscribers
+            if feed_name in DATA_FEEDS:
+                topic = DATA_FEEDS[feed_name]["topic"]
+            elif feed_name == "order_update":
+                topic = OREDR_FEED["topic"]
+            self.event_loop.create_task(self.notify_subscribers(topic, ticks))
+        except Exception as e:
+            self.logger.error(f"Error processing feed: {e}")
 
-    async def _add_data_and_notify(self, data, **kwargs):
+    async def _fetch_data_process_and_notify(self, data, **kwargs):
         if data and len(data) > 0:
             df_name = kwargs.get("df_name ", "default")
             asyncio.create_task(self.data_frames[df_name].add_data(data))
@@ -288,7 +309,7 @@ class StrategyOneDataManager(Singleton, AsyncBaseExecutor, Subscriber):
         data = await asyncio.to_thread(
             self.http_conn.get_option_chain(self.expiry_date)
         )
-        await self._add_data_and_notify(data, **kwargs)
+        await self._fetch_data_process_and_notify(data, **kwargs)
 
     async def fetch_order_updates(self, **kwargs):
         """
@@ -297,7 +318,7 @@ class StrategyOneDataManager(Singleton, AsyncBaseExecutor, Subscriber):
         updates = await asyncio.to_thread(
             self.http_conn.get_order_updates()  # TODO: Implement this method in BreezeData
         )
-        await self._add_data_and_notify(updates, **kwargs)
+        await self._fetch_data_process_and_notify(updates, **kwargs)
 
     async def fetch_margin(self, **kwargs):
         """
@@ -306,7 +327,7 @@ class StrategyOneDataManager(Singleton, AsyncBaseExecutor, Subscriber):
         margin = await asyncio.to_thread(
             self.http_conn.get_margin()  # TODO: Implement this method in BreezeData
         )
-        await self._add_data_and_notify(margin, **kwargs)
+        await self._fetch_data_process_and_notify(margin, **kwargs)
 
     async def update_strike_watch(self, **kwargs):
         """
@@ -332,7 +353,7 @@ class StrategyOneExecutionManager(Singleton, AsyncBaseExecutor, Subscriber):
         )
         self.logger = logging.getLogger(__name__)
 
-    # TODO: In main code hae this call subscribe to various topics as
+    # TODO: In main code havw this class subscribe to various topics as
     # specified in the SUBSCRIPTION_TOPICS list
 
     async def process_day_begin(self):
@@ -349,7 +370,7 @@ class StrategyOneExecutionManager(Singleton, AsyncBaseExecutor, Subscriber):
         self.logger.debug(
             f"Notification received for topic: {topic}. Calling method: {method_name}"
         )
-        if self.is_valid_async_method(method_name):
+        if self._is_valid_async_method(method_name):
             async_func = getattr(self, method_name)
             await async_func(event)
 
@@ -366,9 +387,9 @@ class StrategyOneExecutionManager(Singleton, AsyncBaseExecutor, Subscriber):
         # TODO: implement actual logic
         print(f"Processing on_feed_nifty_1min_ohlcv:{ticks}")
 
-    async def on_feed_option_trade(self, ticks):
+    async def on_feed_option_quote(self, ticks):
         # TODO: implement actual logic
-        print(f"Processing on_feed_option_trade:{ticks}")
+        print(f"Processing on_feed_option_quote:{ticks}")
 
     async def on_feed_order_update(self, ticks):
         # TODO: implement actual logic

@@ -53,12 +53,14 @@ class AsyncRollingDataFrame:
             self.current_df = self.df1
             self.df2 = pd.DataFrame()
 
-    async def load_complete_dataframe(self):
-        if not os.path.exists(self.filepath):
+    async def load_complete_dataframe(self, filepath=None):
+        if filepath is None:
+            filepath = self.filepath
+        if not os.path.exists(filepath):
             return pd.DataFrame()
 
         async with self.lock:
-            return pd.read_csv(self.filepath)
+            return pd.read_csv(filepath)
 
     async def close(self):
         await self.flush_to_disk(self.current_df)
