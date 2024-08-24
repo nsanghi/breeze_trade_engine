@@ -2,7 +2,7 @@ import asyncio
 from datetime import datetime
 import logging
 import os
-from breeze_trade_engine.common.date_utils import get_next_weekly_expiry
+from breeze_trade_engine.common.date_utils import get_weekly_expiry_date
 from breeze_trade_engine.executors.async_base_executor import (
     Singleton,
     AsyncBaseExecutor,
@@ -69,13 +69,13 @@ class OptionChainDataFetcher(Singleton, AsyncBaseExecutor, Subscriber):
         and expirty date at current time
         All breeze calls to be abstracted in common package
         """
-        expiry_date = get_next_weekly_expiry()
+        expiry_date = get_weekly_expiry_date()
         # loop = asyncio.get_running_loop()
         # return await loop.run_in_executor(
         #     self.executor, self.conn.get_option_chain, expiry_date
         # )
         # replaced above with modern idiomatic way
-        return await asyncio.to_thread(self.conn.get_option_chain, expiry_date)
+        return await asyncio.to_thread(self.conn.get_option_chain(expiry_date))
 
     # Function to handle consecutive API call failures
     def handle_consecutive_failures(self):

@@ -32,7 +32,7 @@ def is_trading_day(day):
         return False
 
 
-def get_next_weekly_expiry(current_date=datetime.now()):
+def get_weekly_expiry_date(current_date=datetime.now()):
     """
     Returns the next Thursday expiry adjusing by -1 day for Thursday is a holiday
     Args:

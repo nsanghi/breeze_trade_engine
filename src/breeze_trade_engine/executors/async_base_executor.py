@@ -1,10 +1,8 @@
 import asyncio
-import inspect
 import logging
 from datetime import datetime, timedelta
 from abc import ABC
 
-# from concurrent.futures import ThreadPoolExecutor
 from breeze_trade_engine.common.date_utils import is_trading_day
 
 
@@ -64,7 +62,7 @@ class AsyncBaseExecutor(ABC):
         day_end: Perform actions at the end of the trading day.
         run_daily_cycle: Run the daily cycle of the executor.
         seconds_to_tomorrow_begin: Calculate the number of seconds until tomorrow's start time.
-        run_timer: Run a timer for a specified interval and execute a function when the timer expires.
+        run_timer_loop: Run a timer for a specified interval and execute a function when the timer expires.
         is_valid_timer_defn: Check if a timer definition is valid.
         start_daily_timer_scheduler: Start the daily timer scheduler.
         stop_daily_timer_scheduler: Stop the daily timer scheduler.
@@ -101,7 +99,7 @@ class AsyncBaseExecutor(ABC):
             interval and timers
         ), "Only one of interval or timers can be provided"
         try:
-            self.loop = asyncio.get_running_loop()
+            self.event_loop = asyncio.get_running_loop()
         except RuntimeError:
             raise RuntimeError(
                 "This class can only be instantiated within an asyncio event loop"
@@ -139,7 +137,7 @@ class AsyncBaseExecutor(ABC):
         self.logger.info(f"Day End executed for {self.name}.")
         pass
 
-    async def process_event(self):
+    async def process_event(self, **kwargs):
         """
         This method should be implemented by the derived class to perform any
         processing logic that needs to be done at regular intervals during the trading day.
@@ -147,7 +145,8 @@ class AsyncBaseExecutor(ABC):
         """
         self.logger.info(f"Processing event for {self.name}.")
         result = None  # Placeholder for api call
-        self.notify_subscribers("event", result)
+        topic = "default" if "topic" not in kwargs else kwargs["topic"]
+        self.notify_subscribers(topic, result)
         pass
 
     async def start(self):
@@ -184,8 +183,6 @@ class AsyncBaseExecutor(ABC):
         This method should be called to cleanup the executor and stop the process.
         """
         await self.stop()
-        # not required as we are using modern asyncio.to_thread syntax
-        # self.executor.shutdown(wait=True)
 
     def add_subscriber(self, topic, subscriber):
         if not isinstance(subscriber, Subscriber):
@@ -213,7 +210,7 @@ class AsyncBaseExecutor(ABC):
                     subscriber.process_notification(topic, data)
                 )
             )
-        await asyncio.gather(*tasks)
+        # await asyncio.gather(*tasks) #comneted out as we do not want to wait for all subscribers to finish
 
     async def day_begin(self):
         if self.active_today:
@@ -222,7 +219,7 @@ class AsyncBaseExecutor(ABC):
             await self.process_day_begin()
             self.active_today = True
             self.logger.info(f"Day begin executed for {self.name}.")
-            self.start_daily_timer_scheduler()
+            await self.start_daily_timer_scheduler()
             self.logger.info("Started all timers.")
         except Exception as e:
             self.logger.error(f"Error during day begin for {self.name}: {e}")
@@ -260,10 +257,14 @@ class AsyncBaseExecutor(ABC):
                     await asyncio.sleep(sleep_seconds)
                 elif self.start_time <= now.time() < self.end_time:
                     if not self.active_today:
-                        await self.day_begin()
                         # this will also start the daily timers
+                        await self.day_begin()
+                        # sleep till end of day
+                        seconds_to_day_end = self.end_time - now.time()
+                        await asyncio.sleep(seconds_to_day_end)
                 elif now.time() > self.end_time:
                     await self.day_end()
+                    # sleep till next day
                     await asyncio.sleep(self.seconds_to_tomorrow_begin())
                 else:
                     self.logger.warning(
@@ -279,18 +280,16 @@ class AsyncBaseExecutor(ABC):
         )
         return (next_start_time - now).total_seconds()
 
-    async def run_timer(self, interval_seconds, method_name):
+    async def run_timer_loop(self, interval_seconds, method_name, **kwargs):
         """
-        Runs a timer for a specified interval and executes a function when the timer expires.
+        Runs a timer in a loop for a specified interval and executes a function
+        It is never called when self.running is False
         """
         # process the tick
         try:
             now = datetime.now()
-            if (
-                self.running
-            ):  # execute the function only if the executor is in state of "running"
-                async_func = getattr(self, method_name)
-                await async_func(self)
+            async_func = getattr(self, method_name)
+            await async_func(**kwargs)
         except Exception as e:
             self.logger.error(f"Error during event processing: {e}")
         next_fetch = now + timedelta(seconds=interval_seconds)
@@ -315,14 +314,15 @@ class AsyncBaseExecutor(ABC):
         method = getattr(self, value)
         return asyncio.iscoroutinefunction(method)
 
-    def start_daily_timer_scheduler(self):
+    async def start_daily_timer_scheduler(self):
         if len(self.tasks) > 0:
             self.stop_daily_timer_scheduler()  # for cleanup that did not happen previous day
         if not self.timers:
             self.timers = [
                 {
                     "interval_seconds": self.interval,
-                    "method_name": self.process_event,
+                    "method_name": "process_event",
+                    "topic": "default",
                 }
             ]
         for timer in self.timers:
@@ -333,9 +333,7 @@ class AsyncBaseExecutor(ABC):
                 )
                 continue
             # Start the timer and add it to the list of tasks
-            task = asyncio.create_task(
-                self.run_timer(timer["interval_seconds"], timer["method_name"])
-            )
+            task = asyncio.create_task(self.run_timer_loop(**timer))
             self.tasks.append(task)
             self.logger.info("Started all timers.")
 

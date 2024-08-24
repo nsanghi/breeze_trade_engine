@@ -1,2 +1,2 @@
 from .strategy_one import StrategyOneExecutor
-from .test_strategy import TestStartegy
+from .strategy_one.test_strategy import TestStartegy
