@@ -73,11 +73,6 @@ class AsyncBaseExecutor(ABC):
         add_subscriber: Add a subscriber to a topic.
         remove_subscriber: Remove a subscriber from a topic.
         notify_subscribers: Notify subscribers of a topic with data.
-        _day_begin: Perform actions at the beginning of the trading day.
-        _day_end: Perform actions at the end of the trading day.
-        _daily_cycle: Run the daily cycle of the executor.
-        _seconds_to_tomorrow_begin: Calculate the number of seconds until tomorrow's start time.
-        _run_timer_loop: Run a timer for a specified interval and execute a function when the timer expires.
     """
 
     def __init__(
@@ -120,9 +115,8 @@ class AsyncBaseExecutor(ABC):
         self.start_time = datetime.strptime(start_time, "%H:%M").time()
         self.end_time = datetime.strptime(end_time, "%H:%M").time()
         self.timers: Union[Dict[str, Dict], None] = timers
-        self._tasks = Dict[str, asyncio.Task] - dict()
+        self._tasks: Dict[str, asyncio.Task] = dict()
         self.interval = interval
-        self.active_today = False
         self.running = False
         self.logger = logging.getLogger(__name__)
         # self.executor = ThreadPoolExecutor(
@@ -190,20 +184,13 @@ class AsyncBaseExecutor(ABC):
             return
         self.running = False
         self.logger.info(f"Stopping process: {self.name}")
+        await self._day_end()
         if self._daily_cycle_task:
-            self._daily_cycle_task.cancel()
             try:
-                await self._daily_cycle_task
+                self._daily_cycle_task.cancel()
             except asyncio.CancelledError:
                 pass
-        await self._day_end()
         self.logger.info(f"Stopped process: {self.name}")
-
-    async def cleanup(self):
-        """
-        This method should be called to cleanup the executor and stop the process.
-        """
-        await self.stop()
 
     def add_subscriber(self, topic, subscriber):
         if not isinstance(subscriber, Subscriber):
@@ -235,13 +222,10 @@ class AsyncBaseExecutor(ABC):
         # await asyncio.gather(*tasks)
 
     async def _day_begin(self):
-        if self.active_today:
-            return
         try:
             # instead of overriding _day_begin in sub class, we use hook pattern
             # so that derived class process_day_begin is called before starting timers
             await self.process_day_begin()
-            self.active_today = True
             self.logger.info(f"Day begin executed for {self.name}.")
             await self._start_timers()
             self.logger.info("Started all timers.")
@@ -249,10 +233,7 @@ class AsyncBaseExecutor(ABC):
             self.logger.error(f"Error during day begin for {self.name}: {e}")
 
     async def _day_end(self):
-        if not self.active_today:
-            return
         try:
-            self.active_today = False
             await self._stop_timers()
             # instead of overriding _day_end in sub class, we use hook pattern
             # so that derived class process_day_end is called after stopping timers
@@ -264,41 +245,37 @@ class AsyncBaseExecutor(ABC):
 
     async def _daily_cycle(self):
         while True:
-            if self.running:
-                now = datetime.now()
-                today = now.date()
+            now = datetime.now()
+            today = now.date()
 
-                if not is_trading_day(today):
-                    self.logger.info(
-                        f"{today} is not a trading day. Sleeping till tomorrow."
-                    )
-                    await asyncio.sleep(self._seconds_to_tomorrow_begin())
-                elif now.time() < self.start_time:
-                    sleep_seconds = (
-                        datetime.combine(today, self.start_time) - now
-                    ).total_seconds()
-                    self.logger.info(
-                        f"Sleeping for {sleep_seconds:.2f} seconds until day begin"
-                    )
-                    await asyncio.sleep(sleep_seconds)
-                elif self.start_time <= now.time() < self.end_time:
-                    if not self.active_today:
-                        # this will also start the daily timers
-                        await self._day_begin()
-                        # sleep till end of day
-                        seconds_to_day_end = self.end_time - now.time()
-                        await asyncio.sleep(seconds_to_day_end)
-                elif now.time() > self.end_time:
-                    # stop all daily timers
-                    await self._day_end()
-                    # sleep till next day
-                    await asyncio.sleep(self._seconds_to_tomorrow_begin())
-                else:
-                    self.logger.warning(
-                        "Invalid state reached. Check logic. now = {now}"
-                    )
+            if not is_trading_day(today):
+                self.logger.info(
+                    f"{today} is not a trading day. Sleeping till tomorrow."
+                )
+                await asyncio.sleep(self._seconds_to_tomorrow_begin())
+            elif now.time() < self.start_time:
+                sleep_seconds = (
+                    datetime.combine(today, self.start_time) - now
+                ).total_seconds()
+                self.logger.info(
+                    f"Sleeping for {sleep_seconds:.2f} seconds until day begin"
+                )
+                await asyncio.sleep(sleep_seconds)
+            elif self.start_time <= now.time() < self.end_time:
+                # this will also start the daily timers
+                await self._day_begin()
+                # sleep till end of day
+                seconds_to_day_end = self.end_time - now.time()
+                await asyncio.sleep(seconds_to_day_end)
+            elif now.time() > self.end_time:
+                # stop all daily timers
+                await self._day_end()
+                # sleep till next day
+                await asyncio.sleep(self._seconds_to_tomorrow_begin())
             else:
-                await asyncio.sleep(0.1)
+                self.logger.warning(
+                    "Invalid state reached. Check logic. now = {now}"
+                )
 
     def _seconds_to_tomorrow_begin(self):
         now = datetime.now()
@@ -346,7 +323,8 @@ class AsyncBaseExecutor(ABC):
 
     async def _start_timers(self):
         if len(self._tasks) > 0:
-            self._stop_timers()  # for cleanup that did not happen previous day
+            await self._stop_timers()  # for cleanup that did not happen previous day
+        self._tasks = dict()
         if not self.timers:
             self.timers = {
                 "default": {
