@@ -10,13 +10,14 @@ MAX_CONSECUTIVE_FAILURES = 30
 LOG_LEVEL = logging.DEBUG
 
 
-class BreezeData(Singleton):
+class BreezeData:
 
-    def __init__(self):
+    def __init__(self, ws_connect_flag=False):
         self.breeze = None
         self.consecutive_failures = 0
         self.logger = logging.getLogger(__name__)
         self.logger.setLevel(LOG_LEVEL)
+        self.ws_connect_flag = ws_connect_flag
         try:
             self.connect()
         except Exception as e:
@@ -50,6 +51,9 @@ class BreezeData(Singleton):
                     api_secret=secret_key, session_token=session_token
                 )
                 self.logger.info("Connected to Breeze.")
+                if self.ws_connect_flag:
+                    self.breeze.ws_connect()
+                    self.logger.info("Connected to Breeze websocket")
             except Exception as e:
                 self.logger.error(
                     f"Error connecting. No Fetching will happen",
@@ -156,3 +160,13 @@ class BreezeData(Singleton):
             self.consecutive_failures += 1
             self.logger.error(f"API call failed: {e}")
             return None
+
+    def get_order_updates(self):
+        # TODO: Implement this
+        self.logger.debug("get_order_updates not implemented")
+        return []
+
+    def get_margin(self):
+        # TODO: Implement this
+        self.logger.debug("get_margin not implemented")
+        return [0.0]
