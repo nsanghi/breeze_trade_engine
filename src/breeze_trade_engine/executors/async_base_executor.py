@@ -2,7 +2,7 @@ import asyncio
 import logging
 from datetime import datetime, timedelta
 from abc import ABC
-from typing import Dict, Set, Union
+from typing import Dict, Set, Union, List, Optional
 
 from breeze_trade_engine.common.date_utils import is_trading_day
 
@@ -77,11 +77,11 @@ class AsyncBaseExecutor(ABC):
 
     def __init__(
         self,
-        name,
-        start_time="09:15",
-        end_time="15:30",
-        interval=None,
-        timers=None,
+        name: str,
+        start_time: str = "09:15",
+        end_time: str = "15:30",
+        interval: Optional[int] = None,
+        timers: Optional[List[Dict[str, Union[int, str, bool]]]] = None,
     ):
         """
         Initialize the AsyncBaseExecutor object.
@@ -119,9 +119,6 @@ class AsyncBaseExecutor(ABC):
         self.interval = interval
         self.running = False
         self.logger = logging.getLogger(__name__)
-        # self.executor = ThreadPoolExecutor(
-        #     max_workers=1
-        # )  # with I/O and syncrhoous api calls moving to more modern asyncio.to_task syntax, there is no need to get an executor
         self._daily_cycle_task: Union[asyncio.Task, None] = None
         self.subscribers: Dict[str, Set[Subscriber]] = dict()
 
@@ -187,9 +184,10 @@ class AsyncBaseExecutor(ABC):
         await self._day_end()
         if self._daily_cycle_task:
             try:
-                self._daily_cycle_task.cancel()
+                await self._daily_cycle_task.cancel()
             except asyncio.CancelledError:
                 pass
+        self._daily_cycle_task = None
         self.logger.info(f"Stopped process: {self.name}")
 
     def add_subscriber(self, topic, subscriber):
@@ -211,15 +209,16 @@ class AsyncBaseExecutor(ABC):
     async def notify_subscribers(self, topic, data):
         if topic not in self.subscribers:
             return
-        tasks = []
-        for subscriber in self.subscribers[topic]:
-            tasks.append(
-                asyncio.create_task(
-                    subscriber.process_notification(topic, data)
-                )
+        tasks = [
+            asyncio.create_task(subscriber.process_notification(topic, data))
+            for subscriber in self.subscribers[topic]
+        ]
+        try:
+            await asyncio.gather(*tasks)
+        except Exception as e:
+            self.logger.error(
+                f"Error notifying subscriber for topic {topic}: {e}"
             )
-        # comneted out as we do not want to wait for all subscribers to finish
-        # await asyncio.gather(*tasks)
 
     async def _day_begin(self):
         try:
@@ -265,8 +264,10 @@ class AsyncBaseExecutor(ABC):
                 # this will also start the daily timers
                 await self._day_begin()
                 # sleep till end of day
-                seconds_to_day_end = self.end_time - now.time()
-                await asyncio.sleep(seconds_to_day_end)
+                sleep_seconds = (
+                    datetime.combine(today, self.end_time) - now
+                ).total_seconds()
+                await asyncio.sleep(sleep_seconds)
             elif now.time() > self.end_time:
                 # stop all daily timers
                 await self._day_end()
@@ -289,20 +290,31 @@ class AsyncBaseExecutor(ABC):
         Runs a timer in a loop for a specified interval and executes a function
         It is never called when self.running is Falsebecase all timers are stopped in that case
         """
-        # process the tick
-        try:
-            now = datetime.now()
-            async_func = getattr(self, method_name)
-            await async_func(**kwargs)
-        except Exception as e:
-            self.logger.error(f"Error during event processing: {e}")
-        next_fetch = now + timedelta(seconds=interval_seconds)
-        sleep_time = (next_fetch - datetime.now()).total_seconds()
-        sleep_time = max(
-            0, sleep_time
-        )  # catchup if last processing took longer
-        self.logger.info(f"Sleeping for {sleep_time:.2f} seconds")
-        await asyncio.sleep(sleep_time)
+        self.logger.debug(
+            f"Starting timer {method_name} with interval {interval_seconds} and additional args {kwargs}"
+        )
+        while True:
+            # process the tick
+            try:
+                now = datetime.now()
+                async_func = getattr(self, method_name)
+                self.logger.debug(
+                    f"Executing `{async_func}` for timer {method_name}"
+                )
+                await async_func(**kwargs)
+            except Exception as e:
+                self.logger.error(
+                    f"Error during executing timer `{method_name}`. Error: {e}"
+                )
+            next_fetch = now + timedelta(seconds=interval_seconds)
+            sleep_time = (next_fetch - datetime.now()).total_seconds()
+            sleep_time = max(
+                0, sleep_time
+            )  # catchup if last processing took longer
+            self.logger.debug(
+                f"Sleeping timer {method_name} {sleep_time:.2f} seconds"
+            )
+            await asyncio.sleep(sleep_time)
 
     def _is_valid_timer_defn(self, timer_config):
         if not isinstance(timer_config, dict):
@@ -312,8 +324,7 @@ class AsyncBaseExecutor(ABC):
             or "method_name" not in timer_config
         ):
             return False
-        method_name = getattr(self, timer_config["method_name"], None)
-        return self._is_valid_async_method(method_name)
+        return self._is_valid_async_method(timer_config["method_name"])
 
     def _is_valid_async_method(self, method_name):
         if not hasattr(self, method_name):
@@ -343,7 +354,7 @@ class AsyncBaseExecutor(ABC):
             task_name = timer_name
             task = asyncio.create_task(self._run_timer_loop(**timer_config))
             self._tasks[task_name] = task
-            self.logger.info("Started all timers.")
+            self.logger.info(f"Started time: {timer_name}")
 
     async def _stop_timers(self):
         for task_name, task in self._tasks.items():

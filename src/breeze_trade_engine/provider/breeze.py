@@ -160,3 +160,13 @@ class BreezeData:
             self.consecutive_failures += 1
             self.logger.error(f"API call failed: {e}")
             return None
+
+    def get_order_updates(self):
+        # TODO: Implement this
+        self.logger.debug("get_order_updates not implemented")
+        return []
+
+    def get_margin(self):
+        # TODO: Implement this
+        self.logger.debug("get_margin not implemented")
+        return [0.0]
